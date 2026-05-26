@@ -1,0 +1,52 @@
+services:
+  server:
+    build: .
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${SERVER_POSTGRES_USER:-beetter_srv}
+      POSTGRES_PASSWORD: ${SERVER_POSTGRES_PASSWORD:-beetter_srv}
+      POSTGRES_DB: ${SERVER_POSTGRES_DB:-beetter_srv}
+    volumes:
+      - server_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SERVER_POSTGRES_USER:-beetter_srv}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    ports:
+      - "8087:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${SERVER_INFLUXDB_ADMIN_USER:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${SERVER_INFLUXDB_ADMIN_PASSWORD:-adminpassword}
+      DOCKER_INFLUXDB_INIT_ORG: ${SERVER_INFLUXDB_ORG:-beetter_srv}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${SERVER_INFLUXDB_BUCKET:-sensors}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${SERVER_INFLUXDB_TOKEN:-server-super-secret-token}
+    volumes:
+      - server_influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  server_postgres_data:
+  server_influxdb_data:

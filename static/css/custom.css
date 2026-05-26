@@ -1,0 +1,18 @@
+#sidebar {
+  width: 230px;
+  min-height: 100vh;
+  background: #FF0000;
+  color: #ccc;
+  position: sticky;
+  top: 0;
+}
+#sidebar .sidebar-brand { color: #ffc107; }
+#sidebar .nav-link { color: #aaa; border-radius: 6px; padding: .45rem .75rem; font-size: .9rem; }
+#sidebar .nav-link:hover { background: rgba(255,193,7,.12); color: #ffc107; }
+#sidebar .nav-link.active { background: rgba(255,193,7,.2); color: #ffc107; font-weight: 600; }
+.sidebar-divider { border-color: rgba(255,255,255,.1); margin: .5rem 0; }
+.topbar { background: #fff; border-bottom: 1px solid #e9ecef; min-height: 52px; }
+#page-content { background: #f8f9fa; }
+.auth-card { width: 100%; max-width: 420px; }
+.stat-card { background: #f8f9fa; border: 1px solid #e9ecef; }
+.table th { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }
