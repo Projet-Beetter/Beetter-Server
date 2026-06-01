@@ -3,6 +3,20 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from flask import current_app
 from datetime import datetime, timezone
 
+# Must stay in sync with the Raspberry Pi app's measurement set
+# (app/blueprints/utils/influxdb.py : MEASUREMENTS).
+MEASUREMENTS = (
+    'temperature_int', 'humidity_int',
+    'temperature_ext', 'humidity_ext',
+    'sound_freq_int', 'sound_amp_int',
+    'sound_freq_ext', 'sound_amp_ext',
+    'light_ext',
+)
+
+
+def _measurement_filter():
+    return ' or '.join(f'r._measurement == "{m}"' for m in MEASUREMENTS)
+
 
 def _client():
     return InfluxDBClient(
@@ -13,7 +27,11 @@ def _client():
 
 
 def write_push_data(beehive_id, data_points):
-    """Write a list of {timestamp, temperature?, humidity?} dicts from a push."""
+    """Write a list of pushed rows.
+
+    Each row is {timestamp, <measurement>: value, ...} where <measurement>
+    is any of MEASUREMENTS (temperature_int, humidity_int, ..., light_ext).
+    """
     points = []
     for row in data_points:
         try:
@@ -21,18 +39,14 @@ def write_push_data(beehive_id, data_points):
         except (KeyError, ValueError):
             ts = datetime.now(timezone.utc)
 
-        if row.get('temperature') is not None:
+        for measurement in MEASUREMENTS:
+            value = row.get(measurement)
+            if value is None:
+                continue
             points.append(
-                Point("temperature")
+                Point(measurement)
                 .tag("beehive_id", str(beehive_id))
-                .field("value", float(row['temperature']))
-                .time(ts, WritePrecision.S)
-            )
-        if row.get('humidity') is not None:
-            points.append(
-                Point("humidity")
-                .tag("beehive_id", str(beehive_id))
-                .field("value", float(row['humidity']))
+                .field("value", float(value))
                 .time(ts, WritePrecision.S)
             )
 
@@ -60,14 +74,11 @@ def query_chart_data(beehive_id, range_str='24h'):
 from(bucket: "{bucket}")
   |> range(start: -{range_str})
   |> filter(fn: (r) => r["beehive_id"] == "{beehive_id}")
-  |> filter(fn: (r) => r._measurement == "temperature" or r._measurement == "humidity")
+  |> filter(fn: (r) => {_measurement_filter()})
   |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
   |> yield(name: "mean")
 '''
-    result = {
-        'temperature': {'labels': [], 'data': []},
-        'humidity': {'labels': [], 'data': []},
-    }
+    result = {m: {'labels': [], 'data': []} for m in MEASUREMENTS}
     with _client() as c:
         for table in c.query_api().query(query, org=org):
             if not table.records:
@@ -89,7 +100,7 @@ def list_beehives():
     query = f'''
 from(bucket: "{bucket}")
   |> range(start: -30d)
-  |> filter(fn: (r) => r._measurement == "temperature" or r._measurement == "humidity")
+  |> filter(fn: (r) => {_measurement_filter()})
   |> last()
   |> keep(columns: ["beehive_id", "_measurement", "_value", "_time"])
 '''
