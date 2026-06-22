@@ -3,54 +3,83 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
-<!-- Beehive overview -->
-<h5 class="mt-2 mb-3">Beehives</h5>
+
+{# ── Beehive overview ─────────────────────────────────────── #}
+<h6 class="text-uppercase text-muted fw-semibold mt-2 mb-3" style="font-size:.75rem;letter-spacing:.06em;">Beehives</h6>
 
 {% if not beehives %}
   <div class="card border-0 shadow-sm text-center py-5 text-muted mb-4">
     <i class="bi bi-cloud-download fs-1"></i>
-    <p class="mt-3">No data received yet.</p>
-    <p class="small">The Raspberry Pi will push data once configured.</p>
+    <p class="mt-3 mb-1 fw-semibold">No data received yet</p>
+    <p class="small mb-0">The Raspberry Pi will push data once an API key is configured below.</p>
   </div>
 {% else %}
-  <div class="row g-3 mb-4" id="hiveGrid">
+  <div class="row g-3 mb-4">
     {% for bid, vals in beehives.items() %}
+      {% set t_int = vals.get('temperature_int') %}
+      {% set h_int = vals.get('humidity_int') %}
+      {% set t_ext = vals.get('temperature_ext') %}
+      {% set h_ext = vals.get('humidity_ext') %}
+      {% set f_int = vals.get('sound_freq_int') %}
+      {% set a_int = vals.get('sound_amp_int') %}
+      {% set f_ext = vals.get('sound_freq_ext') %}
+      {% set a_ext = vals.get('sound_amp_ext') %}
+      {% set light = vals.get('light_ext') %}
+
       <div class="col-sm-6 col-xl-4">
         <div class="card border-0 shadow-sm h-100">
           <div class="card-body">
-            <h6 class="fw-bold mb-3">Beehive #{{ bid }}</h6>
-            <div class="row g-2 mb-3">
-              <div class="col-6">
-                <div class="stat-card rounded p-2 text-center">
-                  <div class="text-danger"><i class="bi bi-thermometer-half"></i></div>
-                  <div class="fw-bold fs-5">
-                    {% if vals.temperature %}{{ vals.temperature.value }}°C{% else %}<span class="text-muted">—</span>{% endif %}
-                  </div>
-                  <small class="text-muted">Temperature</small>
-                </div>
+            <div class="d-flex align-items-center justify-content-between mb-3">
+              <h6 class="fw-bold mb-0">
+                <i class="bi bi-hexagon me-1 text-warning"></i>{{ bid }}
+              </h6>
+              {% if t_int %}
+                <small class="text-muted">{{ t_int.time[:16].replace('T',' ') if t_int.time else '' }}</small>
+              {% endif %}
+            </div>
+
+            <div class="metric-grid mb-3">
+              <div class="metric-cell">
+                <div class="metric-val text-danger">{{ '%.1f°C'|format(t_int.value) if t_int and t_int.value is not none else '—' }}</div>
+                <div class="metric-lbl"><i class="bi bi-thermometer-half"></i> Int temp</div>
               </div>
-              <div class="col-6">
-                <div class="stat-card rounded p-2 text-center">
-                  <div class="text-primary"><i class="bi bi-droplet-half"></i></div>
-                  <div class="fw-bold fs-5">
-                    {% if vals.humidity %}{{ vals.humidity.value }}%{% else %}<span class="text-muted">—</span>{% endif %}
-                  </div>
-                  <small class="text-muted">Humidity</small>
-                </div>
+              <div class="metric-cell">
+                <div class="metric-val text-primary">{{ '%.1f%%'|format(h_int.value) if h_int and h_int.value is not none else '—' }}</div>
+                <div class="metric-lbl"><i class="bi bi-droplet-half"></i> Int hum</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val" style="color:#0891b2;">{{ '%.1f/10'|format(light.value) if light and light.value is not none else '—' }}</div>
+                <div class="metric-lbl"><i class="bi bi-brightness-high"></i> Light</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val text-secondary">{{ '%.1f°C'|format(t_ext.value) if t_ext and t_ext.value is not none else '—' }}</div>
+                <div class="metric-lbl"><i class="bi bi-thermometer"></i> Ext temp</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val text-secondary">{{ '%.1f%%'|format(h_ext.value) if h_ext and h_ext.value is not none else '—' }}</div>
+                <div class="metric-lbl"><i class="bi bi-droplet"></i> Ext hum</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-val" style="color:#7c3aed;">{{ '%.0fHz'|format(f_int.value) if f_int and f_int.value is not none else '—' }}</div>
+                <div class="metric-lbl"><i class="bi bi-soundwave"></i> Int freq</div>
               </div>
             </div>
-            <button class="btn btn-sm btn-outline-warning w-100" onclick="loadCharts('{{ bid }}', this)">
+
+            <button class="btn btn-sm btn-outline-warning w-100" onclick="toggleCharts('{{ bid }}', this)">
               <i class="bi bi-bar-chart-line me-1"></i>View charts
             </button>
+
             <div class="hive-charts mt-3 d-none" id="charts-{{ bid }}">
-              <div class="d-flex gap-2 mb-2">
+              <div class="d-flex flex-wrap gap-1 mb-2">
                 {% for r in ['1h','6h','24h','7d','30d'] %}
-                  <button class="btn btn-xs btn-outline-secondary range-btn" style="font-size:.75rem;padding:.2rem .5rem"
-                          data-hive="{{ bid }}" data-range="{{ r }}">{{ r }}</button>
+                  <button class="btn range-btn btn-outline-secondary {% if r == '24h' %}active{% endif %}"
+                          onclick="loadCharts('{{ bid }}', '{{ r }}', this)">{{ r }}</button>
                 {% endfor %}
               </div>
-              <canvas id="temp-{{ bid }}" height="80" class="mb-2"></canvas>
-              <canvas id="hum-{{ bid }}"  height="80"></canvas>
+              <canvas id="chart-temp-{{ bid }}"  height="70" class="mb-2"></canvas>
+              <canvas id="chart-hum-{{ bid }}"   height="70" class="mb-2"></canvas>
+              <canvas id="chart-sound-{{ bid }}" height="70" class="mb-2"></canvas>
+              <canvas id="chart-light-{{ bid }}" height="60"></canvas>
             </div>
           </div>
         </div>
@@ -59,27 +88,29 @@
   </div>
 {% endif %}
 
-<!-- API keys management -->
-<hr>
+{# ── API Keys ─────────────────────────────────────────────── #}
+<hr class="my-4">
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h5 class="mb-0">API Keys</h5>
+  <h6 class="text-uppercase text-muted fw-semibold mb-0" style="font-size:.75rem;letter-spacing:.06em;">API Keys</h6>
 </div>
+
 <div class="row g-3">
   <div class="col-md-5">
     <div class="card border-0 shadow-sm">
       <div class="card-body">
-        <h6 class="card-title fw-semibold mb-3">Generate new key</h6>
+        <p class="text-muted small mb-3">Generate a key for a Raspberry Pi to authenticate its data push.</p>
         <form method="post" action="{{ url_for('dashboard.new_api_key') }}" novalidate>
           {{ form.hidden_tag() }}
           <div class="input-group">
-            {{ form.name(class="form-control", placeholder="Key name") }}
-            {{ form.submit(class="btn btn-warning") }}
+            {{ form.name(class="form-control", placeholder="Key name (e.g. Pi-beehive-1)") }}
+            {{ form.submit(class="btn btn-warning fw-semibold") }}
           </div>
           {% for e in form.name.errors %}<div class="text-danger small mt-1">{{ e }}</div>{% endfor %}
         </form>
       </div>
     </div>
   </div>
+
   <div class="col-md-7">
     {% if api_keys %}
       <div class="card border-0 shadow-sm">
@@ -88,6 +119,7 @@
             <thead class="table-light">
               <tr>
                 <th>Name</th>
+                <th>Status</th>
                 <th>Last used</th>
                 <th class="text-end">Actions</th>
               </tr>
@@ -96,10 +128,17 @@
               {% for k in api_keys %}
               <tr>
                 <td class="fw-semibold">{{ k.name }}</td>
+                <td>
+                  {% if k.enabled %}
+                    <span class="badge bg-success-subtle text-success">Active</span>
+                  {% else %}
+                    <span class="badge bg-secondary-subtle text-secondary">Disabled</span>
+                  {% endif %}
+                </td>
                 <td class="text-muted small">{{ k.last_used_at.strftime('%Y-%m-%d %H:%M') if k.last_used_at else 'Never' }}</td>
                 <td class="text-end">
                   <form method="post" action="{{ url_for('dashboard.delete_api_key', key_id=k.id) }}" class="d-inline"
-                        onsubmit="return confirm('Delete key {{ k.name }}?')">
+                        onsubmit="return confirm('Delete key « {{ k.name }} »?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                   </form>
@@ -111,7 +150,9 @@
         </div>
       </div>
     {% else %}
-      <p class="text-muted small">No keys yet.</p>
+      <div class="card border-0 shadow-sm">
+        <div class="card-body text-muted small">No keys yet. Generate one to let a Raspberry Pi push data.</div>
+      </div>
     {% endif %}
   </div>
 </div>
@@ -119,53 +160,75 @@
 
 {% block scripts %}
 <script>
-  const chartInstances = {};
+const _charts = {};
 
-  async function loadCharts(bid, btn) {
-    const container = document.getElementById('charts-' + bid);
-    container.classList.toggle('d-none');
-    if (!container.classList.contains('d-none')) {
-      await fetchAndRender(bid, '24h');
-    }
+function toggleCharts(bid, btn) {
+  const box = document.getElementById('charts-' + bid);
+  const hidden = box.classList.toggle('d-none');
+  if (!hidden) {
+    const activeBtn = box.querySelector('.range-btn.active');
+    const range = activeBtn ? activeBtn.textContent.trim() : '24h';
+    loadCharts(bid, range, activeBtn);
   }
+}
 
-  async function fetchAndRender(bid, range) {
-    const resp = await fetch(`/beehives/${bid}/chart-data?range=${range}`);
-    const data = await resp.json();
-    renderChart('temp-' + bid, 'Temperature (°C)', '#dc3545', data.temperature || {labels:[], data:[]});
-    renderChart('hum-'  + bid, 'Humidity (%)',      '#0d6efd', data.humidity   || {labels:[], data:[]});
+async function loadCharts(bid, range, btn) {
+  if (btn) {
+    btn.closest('.d-flex').querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
   }
+  const resp = await fetch(`/beehives/${bid}/chart-data?range=${range}`);
+  if (!resp.ok) return;
+  const d = await resp.json();
 
-  function renderChart(id, label, color, dataset) {
-    if (chartInstances[id]) chartInstances[id].destroy();
-    const ctx = document.getElementById(id);
-    if (!ctx) return;
-    chartInstances[id] = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: dataset.labels,
-        datasets: [{
-          label, data: dataset.data,
-          borderColor: color, backgroundColor: color + '22',
-          fill: true, tension: 0.3,
-          pointRadius: dataset.labels.length > 200 ? 0 : 2, borderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { type: 'time', time: { tooltipFormat: 'dd MMM HH:mm' }, ticks: { maxTicksLimit: 6 } },
-          y: { beginAtZero: false }
-        }
+  _render(bid, 'temp',  'Temperature (°C)', [
+    { label: 'Int', color: '#dc3545', data: d.temperature_int },
+    { label: 'Ext', color: '#fd7e14', data: d.temperature_ext },
+  ]);
+  _render(bid, 'hum', 'Humidity (%)', [
+    { label: 'Int', color: '#0d6efd', data: d.humidity_int },
+    { label: 'Ext', color: '#0dcaf0', data: d.humidity_ext },
+  ]);
+  _render(bid, 'sound', 'Sound freq (Hz)', [
+    { label: 'Int', color: '#7c3aed', data: d.sound_freq_int },
+    { label: 'Ext', color: '#a78bfa', data: d.sound_freq_ext },
+  ]);
+  _render(bid, 'light', 'Light (0–10)', [
+    { label: 'Light', color: '#f59e0b', data: d.light_ext },
+  ]);
+}
+
+function _render(bid, key, title, series) {
+  const id = `chart-${key}-${bid}`;
+  if (_charts[id]) _charts[id].destroy();
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  const first = series.find(s => s.data && s.data.labels && s.data.labels.length);
+  if (!first) return;
+  _charts[id] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: first.data.labels,
+      datasets: series.filter(s => s.data).map(s => ({
+        label: s.label,
+        data: s.data.data,
+        borderColor: s.color,
+        backgroundColor: s.color + '22',
+        fill: series.length === 1,
+        tension: 0.3,
+        pointRadius: first.data.labels.length > 200 ? 0 : 2,
+        borderWidth: 2,
+      }))
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: series.length > 1, position: 'top', labels: { boxWidth: 10, font: { size: 11 } } } },
+      scales: {
+        x: { type: 'time', time: { tooltipFormat: 'dd MMM HH:mm' }, ticks: { maxTicksLimit: 5, font: { size: 10 } } },
+        y: { beginAtZero: false, ticks: { font: { size: 10 } } }
       }
-    });
-  }
-
-  document.querySelectorAll('.range-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      fetchAndRender(btn.dataset.hive, btn.dataset.range);
-    });
+    }
   });
+}
 </script>
 {% endblock %}

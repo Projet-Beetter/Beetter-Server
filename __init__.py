@@ -17,6 +17,8 @@ def create_app():
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
+    app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', app.config['SECRET_KEY'])
+
     app.config['INFLUXDB_URL'] = os.environ.get('INFLUXDB_URL', 'http://influxdb:8086')
     app.config['INFLUXDB_TOKEN'] = os.environ.get('INFLUXDB_TOKEN', '')
     app.config['INFLUXDB_ORG'] = os.environ.get('INFLUXDB_ORG', 'beetter_srv')

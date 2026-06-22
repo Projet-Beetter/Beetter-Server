@@ -1,7 +1,7 @@
-from flask import render_template, request, jsonify, flash, redirect, url_for
+from flask import render_template, request, jsonify, flash, redirect, url_for, abort
 from flask_login import login_required, current_user
 from ..utils.influxdb import list_beehives, query_chart_data
-from ...models import db, ApiKey
+from ...models import db, ApiKey, User
 from flask_wtf import FlaskForm
 from wtforms import StringField, SubmitField
 from wtforms.validators import DataRequired, Length
@@ -57,3 +57,44 @@ def chart_data(beehive_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     return jsonify(data)
+
+
+# ── User management (admin only) ───────────────────────────────────────────────
+
+@dashboard_bp.route('/users')
+@login_required
+def users():
+    if not current_user.is_admin:
+        abort(403)
+    all_users = User.query.order_by(User.created_at).all()
+    return render_template('dashboard/users.html', users=all_users)
+
+
+@dashboard_bp.route('/users/<int:user_id>/toggle-role', methods=['POST'])
+@login_required
+def toggle_user_role(user_id):
+    if not current_user.is_admin:
+        abort(403)
+    user = User.query.get_or_404(user_id)
+    if user.id == current_user.id:
+        flash('You cannot change your own role.', 'warning')
+        return redirect(url_for('dashboard.users'))
+    user.role = 'viewer' if user.role == 'admin' else 'admin'
+    db.session.commit()
+    flash(f'"{user.username}" is now {user.role}.', 'success')
+    return redirect(url_for('dashboard.users'))
+
+
+@dashboard_bp.route('/users/<int:user_id>/delete', methods=['POST'])
+@login_required
+def delete_user(user_id):
+    if not current_user.is_admin:
+        abort(403)
+    user = User.query.get_or_404(user_id)
+    if user.id == current_user.id:
+        flash('You cannot delete yourself.', 'warning')
+        return redirect(url_for('dashboard.users'))
+    db.session.delete(user)
+    db.session.commit()
+    flash(f'User "{user.username}" deleted.', 'info')
+    return redirect(url_for('dashboard.users'))
