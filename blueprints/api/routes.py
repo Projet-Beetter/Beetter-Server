@@ -114,8 +114,12 @@ def api_verify():
 
 @api_bp.route('/push', methods=['POST'])
 def push():
-    if not _authenticate():
+    identity = _authenticate()
+    if not identity:
         return jsonify({'error': 'Unauthorized'}), 401
+
+    # Distinguish API key (local instance) from JWT (mobile / human user)
+    api_key = identity if isinstance(identity, ApiKey) else None
 
     payload = request.get_json(force=True, silent=True)
     if not payload or 'beehives' not in payload:
@@ -129,9 +133,12 @@ def push():
         if bid is None:
             continue
 
-        # Auto-créer la ruche en PostgreSQL si elle n'existe pas encore
+        # Auto-create the beehive in PostgreSQL if not seen before, and link it to the instance
         if not Beehive.query.get(str(bid)):
-            db.session.add(Beehive(id=str(bid), name=name))
+            new_hive = Beehive(id=str(bid), name=name)
+            if api_key:
+                new_hive.instance_id = api_key.id
+            db.session.add(new_hive)
             db.session.commit()
 
         if data:
@@ -139,7 +146,17 @@ def push():
                 write_push_data(str(bid), data)
                 written += len(data)
             except Exception as e:
+                if api_key:
+                    api_key.last_push_status = 'error'
+                    api_key.last_push_message = str(e)[:500]
+                    db.session.commit()
                 return jsonify({'error': f'InfluxDB write error: {e}'}), 500
+
+    if api_key:
+        api_key.last_push_at = datetime.now(timezone.utc)
+        api_key.last_push_status = 'success'
+        api_key.last_push_message = f'{written} points written'
+        db.session.commit()
 
     return jsonify({'status': 'ok', 'points_written': written}), 201
 

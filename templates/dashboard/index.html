@@ -11,7 +11,7 @@
   <div class="card border-0 shadow-sm text-center py-5 text-muted mb-4">
     <i class="bi bi-cloud-download fs-1"></i>
     <p class="mt-3 mb-1 fw-semibold">No data received yet</p>
-    <p class="small mb-0">The Raspberry Pi will push data once an API key is configured below.</p>
+    <p class="small mb-0">Register a local instance below and configure the API key on your Raspberry Pi.</p>
   </div>
 {% else %}
   <div class="row g-3 mb-4">
@@ -88,74 +88,148 @@
   </div>
 {% endif %}
 
-{# ── API Keys ─────────────────────────────────────────────── #}
+{# ── Local Instances ──────────────────────────────────────── #}
 <hr class="my-4">
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h6 class="text-uppercase text-muted fw-semibold mb-0" style="font-size:.75rem;letter-spacing:.06em;">API Keys</h6>
+  <h6 class="text-uppercase text-muted fw-semibold mb-0" style="font-size:.75rem;letter-spacing:.06em;">
+    <i class="bi bi-hdd-network me-1"></i>Local Instances
+  </h6>
+  <button class="btn btn-sm btn-warning fw-semibold" data-bs-toggle="collapse" data-bs-target="#register-instance-form">
+    <i class="bi bi-plus-lg me-1"></i>Register instance
+  </button>
 </div>
 
-<div class="row g-3">
-  <div class="col-md-5">
-    <div class="card border-0 shadow-sm">
-      <div class="card-body">
-        <p class="text-muted small mb-3">Generate a key for a Raspberry Pi to authenticate its data push.</p>
-        <form method="post" action="{{ url_for('dashboard.new_api_key') }}" novalidate>
-          {{ form.hidden_tag() }}
-          <div class="input-group">
-            {{ form.name(class="form-control", placeholder="Key name (e.g. Pi-beehive-1)") }}
-            {{ form.submit(class="btn btn-warning fw-semibold") }}
-          </div>
+{# ── Register form (collapsed by default) ────────── #}
+<div class="collapse mb-3" id="register-instance-form">
+  <div class="card border-0 shadow-sm">
+    <div class="card-body p-4">
+      <h6 class="fw-semibold mb-3">New local instance</h6>
+      <form method="post" action="{{ url_for('dashboard.new_instance') }}" novalidate>
+        {{ form.hidden_tag() }}
+        <div class="mb-3">
+          {{ form.name.label(class="form-label fw-semibold") }}
+          {{ form.name(class="form-control", placeholder="e.g. Pi du verger") }}
           {% for e in form.name.errors %}<div class="text-danger small mt-1">{{ e }}</div>{% endfor %}
-        </form>
-      </div>
+        </div>
+        <div class="mb-3">
+          {{ form.description.label(class="form-label fw-semibold") }}
+          {{ form.description(class="form-control", rows=2, placeholder="Optional — location, hardware notes…") }}
+          {% for e in form.description.errors %}<div class="text-danger small mt-1">{{ e }}</div>{% endfor %}
+        </div>
+        <p class="text-muted small mb-3">
+          <i class="bi bi-info-circle me-1"></i>An API key will be generated and shown <strong>once</strong>.
+          Copy it into your Raspberry Pi's app settings (<strong>Settings → Add server → API key</strong>).
+        </p>
+        {{ form.submit(class="btn btn-warning fw-semibold") }}
+      </form>
     </div>
   </div>
+</div>
 
-  <div class="col-md-7">
-    {% if api_keys %}
-      <div class="card border-0 shadow-sm">
-        <div class="table-responsive">
-          <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
-              <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Last used</th>
-                <th class="text-end">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for k in api_keys %}
-              <tr>
-                <td class="fw-semibold">{{ k.name }}</td>
-                <td>
-                  {% if k.enabled %}
-                    <span class="badge bg-success-subtle text-success">Active</span>
-                  {% else %}
-                    <span class="badge bg-secondary-subtle text-secondary">Disabled</span>
-                  {% endif %}
-                </td>
-                <td class="text-muted small">{{ k.last_used_at.strftime('%Y-%m-%d %H:%M') if k.last_used_at else 'Never' }}</td>
-                <td class="text-end">
-                  <form method="post" action="{{ url_for('dashboard.delete_api_key', key_id=k.id) }}" class="d-inline"
-                        onsubmit="return confirm('Delete key « {{ k.name }} »?')">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-                  </form>
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+{# ── Instance list ──────────────────────────────── #}
+{% if instances %}
+  <div class="row g-3">
+    {% for inst in instances %}
+      {% set color = inst.push_status_color %}
+      <div class="col-md-6 col-xl-4">
+        <div class="card border-0 shadow-sm h-100 {% if not inst.enabled %}opacity-75{% endif %}">
+          <div class="card-body">
+
+            {# Header #}
+            <div class="d-flex align-items-start justify-content-between mb-2">
+              <div class="d-flex align-items-center gap-2">
+                <span class="status-dot status-{{ color }}" title="{{ inst.last_push_status or 'never' }}"></span>
+                <span class="fw-bold">{{ inst.name }}</span>
+                {% if not inst.enabled %}
+                  <span class="badge bg-secondary-subtle text-secondary">Disabled</span>
+                {% endif %}
+              </div>
+              <div class="dropdown">
+                <button class="btn btn-sm btn-light border-0 p-1" data-bs-toggle="dropdown" aria-label="Actions">
+                  <i class="bi bi-three-dots-vertical"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                  <li>
+                    <form method="post" action="{{ url_for('dashboard.toggle_instance', instance_id=inst.id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button type="submit" class="dropdown-item">
+                        <i class="bi bi-toggle-{% if inst.enabled %}off{% else %}on{% endif %} me-2"></i>
+                        {{ 'Disable' if inst.enabled else 'Enable' }}
+                      </button>
+                    </form>
+                  </li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li>
+                    <form method="post" action="{{ url_for('dashboard.delete_instance', instance_id=inst.id) }}"
+                          onsubmit="return confirm('Delete instance « {{ inst.name }} »? Its beehives will be unlinked.')">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button type="submit" class="dropdown-item text-danger">
+                        <i class="bi bi-trash me-2"></i>Delete
+                      </button>
+                    </form>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            {# Description #}
+            {% if inst.description %}
+              <p class="text-muted small mb-2">{{ inst.description }}</p>
+            {% endif %}
+
+            {# Push status #}
+            <div class="d-flex flex-wrap gap-2 mb-2">
+              <span class="badge bg-{{ color }}-subtle text-{{ color }} rounded-pill">
+                {% if color == 'success' %}
+                  <i class="bi bi-check-circle me-1"></i>Active
+                {% elif color == 'warning' %}
+                  <i class="bi bi-clock me-1"></i>Idle
+                {% elif color == 'danger' %}
+                  <i class="bi bi-exclamation-circle me-1"></i>Error
+                {% else %}
+                  <i class="bi bi-dash-circle me-1"></i>Never pushed
+                {% endif %}
+              </span>
+              {% if inst.last_push_at %}
+                <span class="badge bg-light text-muted rounded-pill">
+                  <i class="bi bi-arrow-up-circle me-1"></i>
+                  {{ inst.last_push_at.strftime('%Y-%m-%d %H:%M') }}
+                </span>
+              {% endif %}
+            </div>
+
+            {# Beehives linked to this instance #}
+            {% if inst.beehives %}
+              <div class="d-flex flex-wrap gap-1 mt-2">
+                {% for hive in inst.beehives %}
+                  <span class="badge rounded-pill" style="background:#F5CB5C22;color:#92400e;border:1px solid #F5CB5C;">
+                    <i class="bi bi-hexagon me-1"></i>{{ hive.id }}
+                  </span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="text-muted small mb-0 mt-2">No beehives pushed yet.</p>
+            {% endif %}
+
+            {# Registered since #}
+            <p class="text-muted small mb-0 mt-2" style="font-size:.72rem;">
+              Registered {{ inst.created_at.strftime('%Y-%m-%d') }}
+            </p>
+
+          </div>
         </div>
       </div>
-    {% else %}
-      <div class="card border-0 shadow-sm">
-        <div class="card-body text-muted small">No keys yet. Generate one to let a Raspberry Pi push data.</div>
-      </div>
-    {% endif %}
+    {% endfor %}
   </div>
-</div>
+{% else %}
+  <div class="card border-0 shadow-sm">
+    <div class="card-body text-center py-4 text-muted">
+      <i class="bi bi-hdd-network fs-3 mb-2 d-block"></i>
+      No instances registered yet. Click <strong>Register instance</strong> to add your first Raspberry Pi.
+    </div>
+  </div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
