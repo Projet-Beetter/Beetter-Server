@@ -57,3 +57,14 @@ class UserSession(db.Model):
     @property
     def is_valid(self):
         return datetime.utcnow() < self.expires_at
+
+
+class Beehive(db.Model):
+    __tablename__ = 'beehives'
+    id         = db.Column(db.String(20), primary_key=True)
+    name       = db.Column(db.String(100), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {'id': self.id, 'name': self.name}
+

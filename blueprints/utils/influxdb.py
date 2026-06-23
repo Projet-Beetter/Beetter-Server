@@ -23,6 +23,7 @@ def _client():
         url=current_app.config['INFLUXDB_URL'],
         token=current_app.config['INFLUXDB_TOKEN'],
         org=current_app.config['INFLUXDB_ORG'],
+        timeout=10_000,  # 10 secondes max
     )
 
 

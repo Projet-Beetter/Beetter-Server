@@ -1,7 +1,8 @@
+import re
 import jwt
 from flask import request, jsonify, current_app
 from datetime import datetime, timezone, timedelta
-from ...models import db, ApiKey, User
+from ...models import db, ApiKey, User, Beehive
 from ..utils.influxdb import write_push_data, query_chart_data
 from . import api_bp
 
@@ -122,9 +123,18 @@ def push():
 
     written = 0
     for hive in payload.get('beehives', []):
-        bid = hive.get('id')
+        bid  = hive.get('id')
+        name = hive.get('name') or str(bid)
         data = hive.get('data', [])
-        if bid is not None and data:
+        if bid is None:
+            continue
+
+        # Auto-créer la ruche en PostgreSQL si elle n'existe pas encore
+        if not Beehive.query.get(str(bid)):
+            db.session.add(Beehive(id=str(bid), name=name))
+            db.session.commit()
+
+        if data:
             try:
                 write_push_data(str(bid), data)
                 written += len(data)
@@ -132,7 +142,6 @@ def push():
                 return jsonify({'error': f'InfluxDB write error: {e}'}), 500
 
     return jsonify({'status': 'ok', 'points_written': written}), 201
-
 
 # ── Mobile app data endpoints ──────────────────────────────────────────────────
 
@@ -142,12 +151,50 @@ def list_beehives():
         return jsonify({'error': 'Unauthorized'}), 401
     from ..utils.influxdb import list_beehives as _list
     try:
-        data = _list()
+        influx_data = _list()
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-    return jsonify({'beehives': [
-        {'id': bid, 'latest': vals} for bid, vals in data.items()
-    ]})
+
+    # Merge names from PostgreSQL
+    db_hives = {h.id: h.name for h in Beehive.query.all()}
+
+    # Build list from InfluxDB data + inject names
+    beehives = [
+        {'id': bid, 'name': db_hives.get(bid), 'latest': vals}
+        for bid, vals in influx_data.items()
+    ]
+
+    # Also include DB-registered hives with no InfluxDB data yet
+    influx_ids = {b['id'] for b in beehives}
+    for hive_id, name in db_hives.items():
+        if hive_id not in influx_ids:
+            beehives.append({'id': hive_id, 'name': name, 'latest': None})
+
+    return jsonify({'beehives': beehives})
+
+
+@api_bp.route('/beehives', methods=['POST'])
+def create_beehive():
+    if not _authenticate():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    data = request.get_json(force=True, silent=True) or {}
+    hive_id = str(data.get('id', '')).strip().upper()
+    name    = str(data.get('name', '')).strip()
+
+    if not hive_id or not name:
+        return jsonify({'error': 'id and name are required'}), 400
+
+    if not re.match(r'^[A-Z0-9]{1,10}$', hive_id):
+        return jsonify({'error': 'id must be alphanumeric, max 10 chars'}), 422
+
+    if Beehive.query.get(hive_id):
+        return jsonify({'error': f'Beehive {hive_id} already exists'}), 409
+
+    hive = Beehive(id=hive_id, name=name)
+    db.session.add(hive)
+    db.session.commit()
+    return jsonify(hive.to_dict()), 201
 
 
 @api_bp.route('/beehives/<beehive_id>/data')
