@@ -2,7 +2,7 @@ import re
 import jwt
 from flask import request, jsonify, current_app
 from datetime import datetime, timezone, timedelta
-from ...models import db, ApiKey, User, Beehive
+from ...models import db, ApiKey, User, Beehive, Alert
 from ..utils.influxdb import write_push_data, query_chart_data
 from . import api_bp
 
@@ -224,3 +224,53 @@ def beehive_data(beehive_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     return jsonify(data)
+
+
+@api_bp.route('/alerts')
+def get_alerts():
+    if not _authenticate():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    hive_id = request.args.get('hive_id')
+    period  = request.args.get('period', '24h')
+
+    # 1. All alerts to determine the CURRENT state of each hive
+    all_q = Alert.query
+    if hive_id:
+        all_q = all_q.filter_by(beehive_id=hive_id)
+    all_alerts = all_q.order_by(Alert.created_at.asc()).all()
+
+    RESOLVED_STATUSES = {'calm', 'ok', 'no_data', ''}
+    last_per_hive = {}
+    for a in all_alerts:
+        last_per_hive[a.beehive_id] = a
+
+    # Hives still in an alert state
+    active_hive_ids = {
+        bid for bid, a in last_per_hive.items()
+        if a.new_status not in RESOLVED_STATUSES
+    }
+
+    # 2. Alerts to display (period window)
+    period_map = {'1h': 1, '24h': 24, '7d': 168, '30d': 720}
+    hours = period_map.get(period, 24)
+    since = datetime.utcnow() - timedelta(hours=hours)
+
+    display_q = Alert.query
+    if hive_id:
+        display_q = display_q.filter_by(beehive_id=hive_id)
+    display_alerts = display_q.filter(
+        Alert.created_at >= since
+    ).order_by(Alert.created_at.desc()).limit(200).all()
+
+    db_hives = {h.id: h.name for h in Beehive.query.all()}
+
+    result = []
+    for a in display_alerts:
+        d = a.to_dict(beehive_name=db_hives.get(a.beehive_id))
+        is_latest = (last_per_hive.get(a.beehive_id) and
+                     last_per_hive[a.beehive_id].id == a.id)
+        d['resolved'] = not (is_latest and a.beehive_id in active_hive_ids)
+        result.append(d)
+
+    return jsonify({'alerts': result})
