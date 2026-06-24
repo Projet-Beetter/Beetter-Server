@@ -68,3 +68,27 @@ class Beehive(db.Model):
     def to_dict(self):
         return {'id': self.id, 'name': self.name}
 
+
+class Alert(db.Model):
+    __tablename__ = 'alerts'
+    id          = db.Column(db.Integer, primary_key=True)
+    beehive_id  = db.Column(db.String(20), db.ForeignKey('beehives.id'), nullable=False)
+    old_status  = db.Column(db.String(20), nullable=False, default='')
+    new_status  = db.Column(db.String(20), nullable=False)
+    source      = db.Column(db.String(50), nullable=False, default='pi_push')
+    note        = db.Column(db.Text, nullable=True)
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    beehive     = db.relationship('Beehive', backref=db.backref('alerts', cascade='all, delete-orphan'))
+
+    def to_dict(self, beehive_name=None):
+        return {
+            'id': self.id,
+            'beehive_id': self.beehive_id,
+            'beehive_name': beehive_name or self.beehive_id,
+            'old_status': self.old_status,
+            'new_status': self.new_status,
+            'source': self.source,
+            'note': self.note,
+            'created_at': self.created_at.isoformat() + 'Z',
+        }
+
