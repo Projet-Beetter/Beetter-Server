@@ -1,30 +1,49 @@
-from flask import request, jsonify
-from datetime import datetime, timezone
-from ...models import db, ApiKey, UserSession, User
+import re
+import jwt
+from flask import request, jsonify, current_app
+from datetime import datetime, timezone, timedelta
+from ...models import db, ApiKey, User, Beehive, Alert
 from ..utils.influxdb import write_push_data, query_chart_data
 from . import api_bp
+
+
+# ── JWT helpers ────────────────────────────────────────────────────────────────
+
+def _issue_jwt(user):
+    now = datetime.now(timezone.utc)
+    payload = {
+        'sub': user.username,
+        'role': user.role,
+        'iat': now,
+        'exp': now + timedelta(days=30),
+    }
+    return jwt.encode(payload, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
+
+
+def _decode_jwt(token):
+    try:
+        return jwt.decode(token, current_app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+    except jwt.PyJWTError:
+        return None
 
 
 # ── Authentication helper ──────────────────────────────────────────────────────
 
 def _authenticate():
-    """Return an ApiKey or UserSession if the Bearer token is valid, else None."""
     auth = request.headers.get('Authorization', '')
     if not auth.startswith('Bearer '):
         return None
     token = auth[7:]
 
-    # API key (used by Raspberry Pi and direct integrations)
+    payload = _decode_jwt(token)
+    if payload:
+        return payload
+
     key = ApiKey.query.filter_by(key=token, enabled=True).first()
     if key:
         key.last_used_at = datetime.now(timezone.utc)
         db.session.commit()
         return key
-
-    # Mobile session token
-    session = UserSession.query.filter_by(token=token).first()
-    if session and session.is_valid:
-        return session
 
     return None
 
@@ -41,54 +60,142 @@ def api_login():
     if not user or not user.check_password(data.get('password', '')):
         return jsonify({'error': 'Invalid credentials'}), 401
 
-    session = UserSession(user_id=user.id)
-    db.session.add(session)
-    db.session.commit()
-
+    token = _issue_jwt(user)
+    now = datetime.now(timezone.utc)
     return jsonify({
-        'token': session.token,
+        'token': token,
         'username': user.username,
-        'expires_at': session.expires_at.isoformat(),
+        'role': user.role,
+        'expires_at': (now + timedelta(days=30)).isoformat(),
     })
 
 
 @api_bp.route('/auth/logout', methods=['POST'])
 def api_logout():
-    credential = _authenticate()
-    if credential is None:
+    if not _authenticate():
         return jsonify({'error': 'Unauthorized'}), 401
-    if isinstance(credential, UserSession):
-        db.session.delete(credential)
-        db.session.commit()
     return jsonify({'status': 'ok'})
+
+
+@api_bp.route('/auth/verify', methods=['POST'])
+def api_verify():
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({'error': 'Invalid JSON'}), 400
+
+    user = User.query.filter_by(username=data.get('username', '')).first()
+    if not user or not user.check_password(data.get('password', '')):
+        return jsonify({'valid': False, 'error': 'Invalid credentials'}), 401
+
+    token = _issue_jwt(user)
+    now = datetime.now(timezone.utc)
+    return jsonify({
+        'valid': True,
+        'token': token,
+        'username': user.username,
+        'role': user.role,
+        'expires_at': (now + timedelta(days=30)).isoformat(),
+    })
 
 
 # ── Push endpoint (called by Raspberry Pi) ────────────────────────────────────
 
 @api_bp.route('/push', methods=['POST'])
 def push():
-    if not _authenticate():
+    identity = _authenticate()
+    if not identity:
         return jsonify({'error': 'Unauthorized'}), 401
+
+    # Distinguish API key (local instance) from JWT (mobile / human user)
+    api_key = identity if isinstance(identity, ApiKey) else None
 
     payload = request.get_json(force=True, silent=True)
     if not payload or 'beehives' not in payload:
         return jsonify({'error': 'Invalid payload'}), 400
 
     written = 0
+
+    # ── Sensor data ───────────────────────────────────────────────────────────
     for hive in payload.get('beehives', []):
-        bid = hive.get('id')
+        bid  = hive.get('id')
+        name = hive.get('name') or str(bid)
         data = hive.get('data', [])
-        if bid is not None and data:
+        if bid is None:
+            continue
+
+        # Auto-create the beehive in PostgreSQL if not seen before, and link it to the instance
+        if not Beehive.query.get(str(bid)):
+            new_hive = Beehive(id=str(bid), name=name)
+            if api_key:
+                new_hive.instance_id = api_key.id
+            db.session.add(new_hive)
+            db.session.commit()
+
+        if data:
             try:
                 write_push_data(str(bid), data)
                 written += len(data)
             except Exception as e:
+                if api_key:
+                    api_key.last_push_status = 'error'
+                    api_key.last_push_message = str(e)[:500]
+                    db.session.commit()
                 return jsonify({'error': f'InfluxDB write error: {e}'}), 500
 
-    return jsonify({'status': 'ok', 'points_written': written}), 201
+    # ── Update instance push status ───────────────────────────────────────────
+    if api_key:
+        api_key.last_push_at = datetime.now(timezone.utc)
+        api_key.last_push_status = 'success'
+        api_key.last_push_message = f'{written} points written'
+        db.session.commit()
+
+    # ── Alerts ────────────────────────────────────────────────────────────────
+    alerts_written = 0
+
+    for a in payload.get('alerts', []):
+        bid = str(a.get('beehive_id') or a.get('hive_id', ''))
+        if not bid:
+            continue
+
+        # Parse created_at
+        try:
+            created_at = datetime.fromisoformat(
+                a['created_at'].replace('Z', '+00:00')
+            ).replace(tzinfo=None)
+        except (KeyError, ValueError):
+            created_at = datetime.utcnow()
+
+        # Avoid duplicates (same beehive, same status, same second)
+        existing = Alert.query.filter_by(
+            beehive_id=bid,
+            new_status=a.get('new_status', ''),
+            created_at=created_at,
+        ).first()
+        if existing:
+            continue
+
+        alert = Alert(
+            beehive_id=bid,
+            old_status=a.get('old_status', ''),
+            new_status=a.get('new_status', ''),
+            source=a.get('source', 'pi_push'),
+            note=a.get('note'),
+            created_at=created_at,
+        )
+        db.session.add(alert)
+        alerts_written += 1
+
+    if alerts_written:
+        db.session.commit()
+
+    return jsonify({
+        'status': 'ok',
+        'points_written': written,
+        'alerts_written': alerts_written,
+    }), 201
 
 
-# ── Android app data endpoints ─────────────────────────────────────────────────
+# ── Mobile app data endpoints ──────────────────────────────────────────────────
 
 @api_bp.route('/beehives')
 def list_beehives():
@@ -96,12 +203,47 @@ def list_beehives():
         return jsonify({'error': 'Unauthorized'}), 401
     from ..utils.influxdb import list_beehives as _list
     try:
-        data = _list()
+        influx_data = _list()
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-    return jsonify({'beehives': [
-        {'id': bid, 'latest': vals} for bid, vals in data.items()
-    ]})
+
+    db_hives = {h.id: h.name for h in Beehive.query.all()}
+
+    beehives = [
+        {'id': bid, 'name': db_hives.get(bid), 'latest': vals}
+        for bid, vals in influx_data.items()
+    ]
+
+    influx_ids = {b['id'] for b in beehives}
+    for hive_id, name in db_hives.items():
+        if hive_id not in influx_ids:
+            beehives.append({'id': hive_id, 'name': name, 'latest': None})
+
+    return jsonify({'beehives': beehives})
+
+
+@api_bp.route('/beehives', methods=['POST'])
+def create_beehive():
+    if not _authenticate():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    data = request.get_json(force=True, silent=True) or {}
+    hive_id = str(data.get('id', '')).strip().upper()
+    name    = str(data.get('name', '')).strip()
+
+    if not hive_id or not name:
+        return jsonify({'error': 'id and name are required'}), 400
+
+    if not re.match(r'^[A-Z0-9]{1,10}$', hive_id):
+        return jsonify({'error': 'id must be alphanumeric, max 10 chars'}), 422
+
+    if Beehive.query.get(hive_id):
+        return jsonify({'error': f'Beehive {hive_id} already exists'}), 409
+
+    hive = Beehive(id=hive_id, name=name)
+    db.session.add(hive)
+    db.session.commit()
+    return jsonify(hive.to_dict()), 201
 
 
 @api_bp.route('/beehives/<beehive_id>/data')
@@ -114,3 +256,55 @@ def beehive_data(beehive_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     return jsonify(data)
+
+
+# ── Alerts endpoint ───────────────────────────────────────────────────────────
+
+@api_bp.route('/alerts')
+def get_alerts():
+    if not _authenticate():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    hive_id = request.args.get('hive_id')
+    period  = request.args.get('period', '24h')
+
+    # 1. All alerts to determine the CURRENT state of each hive
+    all_q = Alert.query
+    if hive_id:
+        all_q = all_q.filter_by(beehive_id=hive_id)
+    all_alerts = all_q.order_by(Alert.created_at.asc()).all()
+
+    RESOLVED_STATUSES = {'calm', 'ok', 'no_data', ''}
+    last_per_hive = {}
+    for a in all_alerts:
+        last_per_hive[a.beehive_id] = a
+
+    # Hives still in an alert state
+    active_hive_ids = {
+        bid for bid, a in last_per_hive.items()
+        if a.new_status not in RESOLVED_STATUSES
+    }
+
+    # 2. Alerts to display (period window)
+    period_map = {'1h': 1, '24h': 24, '7d': 168, '30d': 720}
+    hours = period_map.get(period, 24)
+    since = datetime.utcnow() - timedelta(hours=hours)
+
+    display_q = Alert.query
+    if hive_id:
+        display_q = display_q.filter_by(beehive_id=hive_id)
+    display_alerts = display_q.filter(
+        Alert.created_at >= since
+    ).order_by(Alert.created_at.desc()).limit(200).all()
+
+    db_hives = {h.id: h.name for h in Beehive.query.all()}
+
+    result = []
+    for a in display_alerts:
+        d = a.to_dict(beehive_name=db_hives.get(a.beehive_id))
+        is_latest = (last_per_hive.get(a.beehive_id) and
+                     last_per_hive[a.beehive_id].id == a.id)
+        d['resolved'] = not (is_latest and a.beehive_id in active_hive_ids)
+        result.append(d)
+
+    return jsonify({'alerts': result})

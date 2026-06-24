@@ -1,18 +1,129 @@
+/* ── Sidebar ───────────────────────────────────────────────── */
 #sidebar {
-  width: 230px;
-  min-height: 100vh;
-  background: #E8EDDF;
-  color: #ccc;
+  width: 220px;
+  min-width: 220px;
+  background: #333533;
+  color: #E8EDDF;
+  display: flex;
+  flex-direction: column;
   position: sticky;
   top: 0;
+  height: 100vh;
+  border-right: 2px solid rgba(255,255,255,.08);
+  flex-shrink: 0;
 }
-#sidebar .sidebar-brand { color: #ffc107; }
-#sidebar .nav-link { color: #aaa; border-radius: 6px; padding: .45rem .75rem; font-size: .9rem; }
-#sidebar .nav-link:hover { background: rgba(255,193,7,.12); color: #ffc107; }
+
+.sidebar-brand {
+  color: #F5CB5C;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.sidebar-brand:hover { color: #F5CB5C; }
+
+#sidebar .nav-link {
+  color: #CFDBD5;
+  border-radius: 6px;
+  padding: 0 .75rem;
+  height: 36px;
+  font-size: .9rem;
+  display: flex;
+  align-items: center;
+  transition: background .2s, color .2s;
+}
+
+#sidebar .nav-link i { min-width: 1.3rem; text-align: center; }
+
+#sidebar .nav-link:hover { background: rgba(255,193,7,.12); color: #F5CB5C; }
 #sidebar .nav-link.active { background: rgba(255,193,7,.2); color: #ffc107; font-weight: 600; }
+#sidebar .nav-link.text-danger { color: #f87171 !important; }
+#sidebar .nav-link.text-danger:hover { background: rgba(248,113,113,.12); color: #ef4444 !important; }
+
 .sidebar-divider { border-color: rgba(255,255,255,.1); margin: .5rem 0; }
-.topbar { background: #fff; border-bottom: 1px solid #e9ecef; min-height: 52px; }
-#page-content { background: #f8f9fa; }
+
+/* ── Top bar ───────────────────────────────────────────────── */
+.topbar {
+  background: #fff;
+  border-bottom: 2px solid rgba(36,36,35,.12);
+  min-height: 52px;
+  position: sticky;
+  top: 0;
+  z-index: 1030;
+}
+
+/* ── Page content ──────────────────────────────────────────── */
+#page-content { background: #E8EDDF; }
+
+/* ── Auth pages ────────────────────────────────────────────── */
+.auth-bg { background: #E8EDDF; }
 .auth-card { width: 100%; max-width: 420px; }
-.stat-card { background: #f8f9fa; border: 1px solid #e9ecef; }
-.table th { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }
+
+/* ── Cards ─────────────────────────────────────────────────── */
+.card { border-radius: 10px; }
+
+/* ── Metric grid inside hive card ──────────────────────────── */
+.metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: .4rem;
+}
+
+.metric-cell {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: .35rem .4rem;
+  text-align: center;
+  font-size: .78rem;
+}
+
+.metric-cell .metric-val {
+  font-weight: 700;
+  font-size: .9rem;
+  line-height: 1.2;
+}
+
+.metric-cell .metric-lbl {
+  color: #6c757d;
+  font-size: .68rem;
+  white-space: nowrap;
+}
+
+/* ── Status dot ────────────────────────────────────────────── */
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+/* Legacy names (used in app/) */
+.status-ok        { background: #639922; }
+.status-warn      { background: #f97316; }
+.status-crit      { background: #E24B4A; }
+.status-none      { background: #9ca3af; }
+/* Bootstrap-aligned names (used for local instance cards) */
+.status-success   { background: #639922; }
+.status-warning   { background: #f97316; }
+.status-danger    { background: #E24B4A; }
+.status-secondary { background: #9ca3af; }
+
+/* ── Table ─────────────────────────────────────────────────── */
+.table th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: #6c757d; }
+
+/* ── Hive charts ───────────────────────────────────────────── */
+.range-btn { font-size: .72rem; padding: .15rem .45rem; }
+
+/* ── Push source badge ─────────────────────────────────────── */
+.source-badge {
+  font-size: .7rem;
+  background: rgba(245,203,92,.2);
+  color: #92620a;
+  border: 1px solid rgba(245,203,92,.5);
+  border-radius: 4px;
+  padding: .1rem .4rem;
+}

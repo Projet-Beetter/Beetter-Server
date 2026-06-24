@@ -17,6 +17,8 @@ def create_app():
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
+    app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', app.config['SECRET_KEY'])
+
     app.config['INFLUXDB_URL'] = os.environ.get('INFLUXDB_URL', 'http://influxdb:8086')
     app.config['INFLUXDB_TOKEN'] = os.environ.get('INFLUXDB_TOKEN', '')
     app.config['INFLUXDB_ORG'] = os.environ.get('INFLUXDB_ORG', 'beetter_srv')
@@ -46,5 +48,25 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _migrate(db)
 
     return app
+
+
+def _migrate(db):
+    """Add new columns to existing tables without dropping data."""
+    from sqlalchemy import text
+    with db.engine.begin() as conn:
+        for col, ddl in [
+            ('description',        'TEXT'),
+            ('last_push_at',       'TIMESTAMPTZ'),
+            ('last_push_status',   "VARCHAR(20) DEFAULT 'never'"),
+            ('last_push_message',  'VARCHAR(500)'),
+        ]:
+            conn.execute(text(
+                f'ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS {col} {ddl}'
+            ))
+        conn.execute(text(
+            'ALTER TABLE beehives ADD COLUMN IF NOT EXISTS '
+            'instance_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL'
+        ))
