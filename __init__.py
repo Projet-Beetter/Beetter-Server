@@ -48,5 +48,25 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _migrate(db)
 
     return app
+
+
+def _migrate(db):
+    """Add new columns to existing tables without dropping data."""
+    from sqlalchemy import text
+    with db.engine.begin() as conn:
+        for col, ddl in [
+            ('description',        'TEXT'),
+            ('last_push_at',       'TIMESTAMPTZ'),
+            ('last_push_status',   "VARCHAR(20) DEFAULT 'never'"),
+            ('last_push_message',  'VARCHAR(500)'),
+        ]:
+            conn.execute(text(
+                f'ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS {col} {ddl}'
+            ))
+        conn.execute(text(
+            'ALTER TABLE beehives ADD COLUMN IF NOT EXISTS '
+            'instance_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL'
+        ))

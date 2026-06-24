@@ -102,8 +102,12 @@ def api_verify():
 
 @api_bp.route('/push', methods=['POST'])
 def push():
-    if not _authenticate():
+    identity = _authenticate()
+    if not identity:
         return jsonify({'error': 'Unauthorized'}), 401
+
+    # Distinguish API key (local instance) from JWT (mobile / human user)
+    api_key = identity if isinstance(identity, ApiKey) else None
 
     payload = request.get_json(force=True, silent=True)
     if not payload or 'beehives' not in payload:
@@ -119,9 +123,12 @@ def push():
         if bid is None:
             continue
 
-        # Auto-create beehive in PostgreSQL if needed
+        # Auto-create the beehive in PostgreSQL if not seen before, and link it to the instance
         if not Beehive.query.get(str(bid)):
-            db.session.add(Beehive(id=str(bid), name=name))
+            new_hive = Beehive(id=str(bid), name=name)
+            if api_key:
+                new_hive.instance_id = api_key.id
+            db.session.add(new_hive)
             db.session.commit()
 
         if data:
@@ -129,11 +136,21 @@ def push():
                 write_push_data(str(bid), data)
                 written += len(data)
             except Exception as e:
+                if api_key:
+                    api_key.last_push_status = 'error'
+                    api_key.last_push_message = str(e)[:500]
+                    db.session.commit()
                 return jsonify({'error': f'InfluxDB write error: {e}'}), 500
+
+    # ── Update instance push status ───────────────────────────────────────────
+    if api_key:
+        api_key.last_push_at = datetime.now(timezone.utc)
+        api_key.last_push_status = 'success'
+        api_key.last_push_message = f'{written} points written'
+        db.session.commit()
 
     # ── Alerts ────────────────────────────────────────────────────────────────
     alerts_written = 0
-    db_hives = {h.id: h.name for h in Beehive.query.all()}
 
     for a in payload.get('alerts', []):
         bid = str(a.get('beehive_id') or a.get('hive_id', ''))
@@ -251,33 +268,43 @@ def get_alerts():
     hive_id = request.args.get('hive_id')
     period  = request.args.get('period', '24h')
 
-    query = Alert.query
+    # 1. All alerts to determine the CURRENT state of each hive
+    all_q = Alert.query
     if hive_id:
-        query = query.filter_by(beehive_id=hive_id)
+        all_q = all_q.filter_by(beehive_id=hive_id)
+    all_alerts = all_q.order_by(Alert.created_at.asc()).all()
 
-    period_map = {'1h': 1, '24h': 24, '7d': 168, '30d': 720}
-    hours = period_map.get(period, 24)
-    since = datetime.utcnow() - timedelta(hours=hours)
-    query = query.filter(Alert.created_at >= since)
-
-    alerts = query.order_by(Alert.created_at.desc()).limit(200).all()
-    db_hives = {h.id: h.name for h in Beehive.query.all()}
-
-    # Last alert per hive = current state; active if new_status is not a resolved status
     RESOLVED_STATUSES = {'calm', 'ok', 'no_data', ''}
     last_per_hive = {}
-    for a in sorted(alerts, key=lambda x: x.created_at):
+    for a in all_alerts:
         last_per_hive[a.beehive_id] = a
 
-    active_ids = {
-        a.id for a in last_per_hive.values()
+    # Hives still in an alert state
+    active_hive_ids = {
+        bid for bid, a in last_per_hive.items()
         if a.new_status not in RESOLVED_STATUSES
     }
 
+    # 2. Alerts to display (period window)
+    period_map = {'1h': 1, '24h': 24, '7d': 168, '30d': 720}
+    hours = period_map.get(period, 24)
+    since = datetime.utcnow() - timedelta(hours=hours)
+
+    display_q = Alert.query
+    if hive_id:
+        display_q = display_q.filter_by(beehive_id=hive_id)
+    display_alerts = display_q.filter(
+        Alert.created_at >= since
+    ).order_by(Alert.created_at.desc()).limit(200).all()
+
+    db_hives = {h.id: h.name for h in Beehive.query.all()}
+
     result = []
-    for a in alerts:
+    for a in display_alerts:
         d = a.to_dict(beehive_name=db_hives.get(a.beehive_id))
-        d['resolved'] = a.id not in active_ids
+        is_latest = (last_per_hive.get(a.beehive_id) and
+                     last_per_hive[a.beehive_id].id == a.id)
+        d['resolved'] = not (is_latest and a.beehive_id in active_hive_ids)
         result.append(d)
 
     return jsonify({'alerts': result})
