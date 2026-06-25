@@ -207,17 +207,27 @@ def list_beehives():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-    db_hives = {h.id: h.name for h in Beehive.query.all()}
+    db_hives = {h.id: h for h in Beehive.query.all()}
+
+    # Derive current status from latest alert per beehive (single query)
+    last_status: dict[str, str] = {}
+    for a in Alert.query.order_by(Alert.created_at.asc()).all():
+        last_status[a.beehive_id] = a.new_status
 
     beehives = [
-        {'id': bid, 'name': db_hives.get(bid), 'latest': vals}
+        {
+            'id': bid,
+            'name': db_hives[bid].name if bid in db_hives else None,
+            'latest': vals,
+            'status': last_status.get(bid, 'no_data'),
+        }
         for bid, vals in influx_data.items()
     ]
 
     influx_ids = {b['id'] for b in beehives}
-    for hive_id, name in db_hives.items():
+    for hive_id, db_hive in db_hives.items():
         if hive_id not in influx_ids:
-            beehives.append({'id': hive_id, 'name': name, 'latest': None})
+            beehives.append({'id': hive_id, 'name': db_hive.name, 'latest': None, 'status': last_status.get(hive_id, 'no_data')})
 
     return jsonify({'beehives': beehives})
 
